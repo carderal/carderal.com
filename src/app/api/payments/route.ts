@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import mysql from 'mysql2';
 
-export async function POST(request: any) {
+export async function POST(request: Request) {
   try {
     const { id, topic } = await request.json();
 
