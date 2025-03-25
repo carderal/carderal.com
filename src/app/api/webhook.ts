@@ -18,35 +18,41 @@ async function connectDB() {
 }
 
 export async function POST(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const id = searchParams.get("id");
-  const topic = searchParams.get("topic");
-
-  if (!id || topic !== "payment") {
-    return NextResponse.json({ error: "Parâmetros inválidos" }, { status: 400 });
-  }
-
   try {
-    const response = await axios.get(`https://api.mercadopago.com/v1/payments/${id}`, {
-      headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN}` },
-    });
+    const body = await req.json();
 
-    const payment = response.data;
-
-    if (payment.status !== "approved") {
-      return NextResponse.json({ error: "Pagamento não aprovado" }, { status: 400 });
+    if (body.action !== 'payment.updated' || body.type !== 'payment' || !body.data?.id) {
+      return NextResponse.json({ error: "Payload inválido" }, { status: 400 });
     }
 
-    const connection = await connectDB();
-    await connection.execute(
-      "INSERT INTO autopix_pendings (id, player) VALUES (?, ?)",
-      [id, payment.external_reference]
-    );
-    await connection.end();
+    const paymentId = body.data.id;
 
-    return NextResponse.json({ success: "Pagamento registrado com sucesso!" }, { status: 201 });
+    try {
+      const response = await axios.get(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
+        headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN}` },
+      });
+
+      const payment = response.data;
+
+      if (payment.status !== "approved") {
+        return NextResponse.json({ error: "Pagamento não aprovado" }, { status: 400 });
+      }
+
+      const connection = await connectDB();
+      await connection.execute(
+        "INSERT INTO autopix_pendings (id, player) VALUES (?, ?)",
+        [paymentId, payment.external_reference]
+      );
+      await connection.end();
+
+      return NextResponse.json({ success: "Pagamento registrado com sucesso!" }, { status: 201 });
+    } catch (error) {
+      console.error("Erro ao processar pagamento:", error);
+      return NextResponse.json({ error: "Erro interno do servidor" }, { status: 500 });
+    }
   } catch (error) {
     console.error("Erro ao processar pagamento:", error);
     return NextResponse.json({ error: "Erro interno do servidor" }, { status: 500 });
   }
 }
+
