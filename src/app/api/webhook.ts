@@ -1,6 +1,6 @@
-import { NextApiRequest, NextApiResponse } from "next";
-import mysql from "mysql2/promise";
-import axios from "axios";
+import { NextRequest, NextResponse } from 'next/server';
+import mysql from 'mysql2/promise';
+import axios from 'axios';
 
 const MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN;
 const DB_HOST = process.env.DB_HOST;
@@ -17,56 +17,36 @@ async function connectDB() {
   });
 }
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Método não permitido" });
+export async function POST(req: NextRequest) {
+  const { searchParams } = new URL(req.url);
+  const id = searchParams.get("id");
+  const topic = searchParams.get("topic");
+
+  if (!id || topic !== "payment") {
+    return NextResponse.json({ error: "Parâmetros inválidos" }, { status: 400 });
   }
 
   try {
-    // Extrai `id` e `topic` corretamente do `req.body`
-    const { id, topic } = req.body;
+    const response = await axios.get(`https://api.mercadopago.com/v1/payments/${id}`, {
+      headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN}` },
+    });
 
-    if (!id || topic?.trim() !== "payment") {
-      return res.status(400).json({ error: "Parâmetros inválidos" });
-    }
-
-    // Busca detalhes do pagamento no Mercado Pago
-    const { data: payment } = await axios.get(
-      `https://api.mercadopago.com/v1/payments/${id}`,
-      {
-        headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN}` },
-      }
-    );
-
-    if (!payment) {
-      console.error("❌ Erro: Resposta vazia do Mercado Pago");
-      return res.status(500).json({ error: "Erro ao buscar pagamento" });
-    }
-
-    console.log("✅ Pagamento encontrado:", payment);
+    const payment = response.data;
 
     if (payment.status !== "approved") {
-      console.warn("⚠️ Pagamento não aprovado:", payment.status);
-      return res.status(400).json({ error: "Pagamento não aprovado" });
+      return NextResponse.json({ error: "Pagamento não aprovado" }, { status: 400 });
     }
 
-    // Conexão com o banco de dados
     const connection = await connectDB();
+    await connection.execute(
+      "INSERT INTO autopix_pendings (id, player) VALUES (?, ?)",
+      [id, payment.external_reference]
+    );
+    await connection.end();
 
-    try {
-      await connection.execute(
-        "INSERT INTO autopix_pendings (id, player) VALUES (?, ?)",
-        [id, payment.external_reference]
-      );
-    } finally {
-      await connection.end(); // Fecha a conexão corretamente
-    }
-
-    console.log("✅ Pagamento registrado no banco:", id);
-
-    return res.status(201).json({ success: "Pagamento registrado com sucesso!" });
-  } catch (error: any) {
-    console.error("❌ Erro ao processar webhook:", error.response?.data || error.message);
-    return res.status(500).json({ error: "Erro interno do servidor" });
+    return NextResponse.json({ success: "Pagamento registrado com sucesso!" }, { status: 201 });
+  } catch (error) {
+    console.error("Erro ao processar pagamento:", error);
+    return NextResponse.json({ error: "Erro interno do servidor" }, { status: 500 });
   }
 }
