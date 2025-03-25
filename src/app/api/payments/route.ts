@@ -1,19 +1,23 @@
-import { NextApiRequest, NextApiResponse } from "next";
-import mysql from "mysql2"
+import { NextRequest, NextResponse } from "next/server";
+import mysql from "mysql2";
 
 interface PaymentRequest {
   id: string
   topic: string
 }
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if(req.method === 'POST'){
-    try {
-      const { id, topic }: PaymentRequest = req.body;
+export async function POST(req: NextRequest) {
+  if (req.method !== 'POST') {
+    return NextResponse.json({ message: 'Method not allowed' }, { status: 405 });
+  }
 
-      if(!id || !topic || topic !== 'payment'){
-        return res.status(400).json({ message: 'Invalid request'})
-      }
+  try {
+    const body = await req.json();
+    const { id, topic }: PaymentRequest = body;
+
+    if(!id || !topic || topic !== 'payment'){
+      return NextResponse.json({ message: 'Invalid request' }, { status: 400 })
+    }
 
       const host = process.env.DB_HOST
       const user = process.env.DB_USER
@@ -21,7 +25,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const db = process.env.DB_NAME
       const token = process.env.MP_ACCESS_TOKEN
 
-      const response = await fetch('https://api.mercadopago.com/v1/payments/${id}', {
+      const response = await fetch(`https://api.mercadopago.com/v1/payments/${id}`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -41,21 +45,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const player = payment.external_reference
         const insertSQL = 'INSERT INTO autopix_pendings (id, player) VALUES (?,?)'
 
-        connection.execute(insertSQL, [id, player], (error, results) => {
-          if(error){
-            console.error('Error inserting payment:', error)
-            return res.status(500).json({ message: 'Internal server error'})
-          }
-
-          connection.end()
-          return res.status(201).json({ message: 'Payment registered successfully'})
-        })
+        try {
+          await new Promise((resolve, reject) => {
+            connection.execute(insertSQL, [id, player], (error, results) => {
+              if(error){
+                console.error('Error inserting payment:', error)
+                reject(error)
+                return
+              }
+              connection.end()
+              resolve(results)
+            })
+          })
+          return NextResponse.json({ message: 'Payment registered successfully' }, { status: 201 })
+        } catch (error) {
+          console.error('Error inserting payment:', error)
+          return NextResponse.json({ message: 'Internal server error' }, { status: 500 })
+        }
       } else {
-        return res.status(400).json({ message: 'Payment not approved'})
+        return NextResponse.json({ message: 'Payment not approved' }, { status: 400 })
       }
     } catch (error) {
       console.error('Error processing payment:', error)
-      return res.status(500).json({ message: 'Internal server error'})
+      return NextResponse.json({ message: 'Internal server error' }, { status: 500 })
     }
-  }
 }
